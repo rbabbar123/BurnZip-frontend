@@ -1,16 +1,11 @@
 import React, { useState, useRef, useEffect } from "react";
 
 /**
- * BurnZip landing page + client-side encryption uploader + shareable encrypted links
+ * BurnZip updated App.js
+ * - Improved copy UX for generated share link
+ * - Minimal recipient landing view when URL contains #share:<base64>
  *
- * - Client-side encryption: PBKDF2 (200k iterations) + AES-GCM
- * - Produces a copy-pasteable share URL that embeds the encrypted payload in the URL fragment for immediate testing
- * - Recipient opens the URL, enters the 10-character code, and downloads/decrypts the file or message client-side
- * - For large files embed is rejected and user is prompted to upload the encrypted blob to a server instead
- *
- * Security note
- * - Embedding ciphertext in a URL fragment keeps it out of normal HTTP logs and the server does not receive the ciphertext.
- * - URL fragments may be visible in browser history and are shareable. For production large payloads use server-side storage and short IDs.
+ * Keep server-side upload / short-ID approach for large payloads in future.
  */
 
 const MAX_EMBED_BYTES = 96 * 1024; // safe embed threshold ~96KB
@@ -22,7 +17,7 @@ const Section = ({ title, children }) => (
   </section>
 );
 
-// crypto helpers
+// ---- Crypto helpers ----
 async function deriveKeyFromCode(code, salt) {
   const enc = new TextEncoder();
   const passKey = await window.crypto.subtle.importKey(
@@ -113,6 +108,7 @@ function unpackageEncrypted(u8) {
   return { salt, filename, encrypted };
 }
 
+// ---- App ----
 export default function App() {
   const [uploaderOpen, setUploaderOpen] = useState(false);
   const [mode, setMode] = useState("file");
@@ -123,15 +119,17 @@ export default function App() {
   const [shareUrl, setShareUrl] = useState(null);
   const [busy, setBusy] = useState(false);
   const [pasteWarning, setPasteWarning] = useState(null);
+  const copyInputRef = useRef(null);
+  const [copyToast, setCopyToast] = useState("");
 
-  // download/decrypt page state when visiting a share URL
+  // recipient flow state
   const [incomingShare, setIncomingShare] = useState(null);
   const [incomingCode, setIncomingCode] = useState("");
   const [decryptedPreview, setDecryptedPreview] = useState(null);
   const [downloadReady, setDownloadReady] = useState(null);
 
   useEffect(() => {
-    // on app load, detect share fragment of form #share:<base64>
+    // detect share fragment of form #share:<base64>
     const frag = window.location.hash || "";
     if (frag.startsWith("#share:")) {
       const payloadB64 = frag.slice(7);
@@ -139,6 +137,9 @@ export default function App() {
         try {
           const u8 = base64ToU8(payloadB64);
           setIncomingShare(u8);
+          // remove fragment from visible address bar while keeping payload in memory
+          // history.replaceState requires window.history explicitly
+          window.history.replaceState(null, "", window.location.pathname);
         } catch (e) {
           setPasteWarning("Malformed share link");
         }
@@ -201,14 +202,16 @@ export default function App() {
       }
 
       const b64 = u8ToBase64(packaged);
-      // build a copy-pasteable URL that embeds the ciphertext in the fragment
       const url = `${window.location.origin}${window.location.pathname}#share:${b64}`;
       setShareUrl({ url, code, size: packaged.length, filename });
-      // copy to clipboard
+
+      // copy to clipboard and show toast
       try {
         await navigator.clipboard.writeText(url);
+        setCopyToast("Link copied to clipboard");
+        setTimeout(() => setCopyToast(""), 2200);
       } catch (e) {
-        // ignore clipboard failures
+        // ignore copy failure; UI still shows input for manual copy
       }
     } catch (e) {
       console.error("Encrypt/pack failed", e);
@@ -218,6 +221,7 @@ export default function App() {
     }
   }
 
+  // minimal recipient view: decrypt and produce download
   async function handleDownloadFromShare(u8Payload) {
     try {
       setBusy(true);
@@ -229,7 +233,8 @@ export default function App() {
       }
       const key = await deriveKeyFromCode(incomingCode, salt);
       const decrypted = await decryptArrayBuffer(key, encrypted);
-      // if filename looks like message.txt and content is text, show preview
+
+      // detect ASCII text to show preview
       let isText = false;
       try {
         const txt = new TextDecoder().decode(decrypted);
@@ -239,7 +244,6 @@ export default function App() {
         isText = false;
       }
 
-      // create blob and download link
       const blob = new Blob([decrypted], { type: "application/octet-stream" });
       const objectUrl = URL.createObjectURL(blob);
       setDownloadReady({ url: objectUrl, filename, size: blob.size });
@@ -251,74 +255,80 @@ export default function App() {
     }
   }
 
-  function handleClearFragment() {
-    window.history.replaceState(null, "", window.location.pathname);
+  function handleClearIncoming() {
     setIncomingShare(null);
     setIncomingCode("");
     setDecryptedPreview(null);
     setDownloadReady(null);
     setPasteWarning(null);
+    // keep user on same page without fragment
+    window.history.replaceState(null, "", window.location.pathname);
   }
 
-  return (
-    <div
-      style={{
-        fontFamily:
-          "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial",
-        color: "#111",
-        padding: 20,
-        maxWidth: 980,
-        margin: "18px auto",
-      }}
-    >
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 16,
-        }}
-      >
-        <div>
-          <h1
-            style={{
-              margin: 0,
-              fontSize: 28,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <span style={{ fontSize: 20 }}>🔐</span>
-            <span>Welcome to BurnZip</span>
-          </h1>
-          <p style={{ margin: "6px 0 0 0", color: "#444", maxWidth: 720 }}>
-            No login. No tracking metadata. No logs. No storage. No footprint. Just trust.
-          </p>
+  // small helper for copy input select + copy
+  async function copyShareInput() {
+    if (!copyInputRef.current) return;
+    copyInputRef.current.select();
+    try {
+      await navigator.clipboard.writeText(copyInputRef.current.value);
+      setCopyToast("Link copied to clipboard");
+      setTimeout(() => setCopyToast(""), 2200);
+    } catch (e) {
+      setCopyToast("Copy failed");
+      setTimeout(() => setCopyToast(""), 2200);
+    }
+  }
+
+  // If an incoming share exists, render only the minimal recipient UI
+  if (incomingShare) {
+    return (
+      <div style={{ fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, Arial", padding: 24, maxWidth: 720, margin: "24px auto" }}>
+        <h1 style={{ marginTop: 0 }}>BurnZip — Encrypted payload</h1>
+        <p>Enter the 10-character code you received to decrypt and download the file or message.</p>
+
+        {pasteWarning && <div style={{ color: "crimson", marginBottom: 12 }}>{pasteWarning}</div>}
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <input value={incomingCode} onChange={(e) => setIncomingCode(e.target.value.toUpperCase())} maxLength={10} placeholder="Enter 10-character code" style={{ flex: 1, padding: 10, borderRadius: 6, border: "1px solid #ddd" }} />
+          <button onClick={() => handleDownloadFromShare(incomingShare)} disabled={busy} style={{ padding: "10px 14px", borderRadius: 6, background: "#0b63d8", color: "#fff", border: "none" }}>{busy ? "Working…" : "Decrypt & Download"}</button>
         </div>
 
+        {decryptedPreview && <div style={{ background: "#f8f8f8", padding: 10, borderRadius: 6, whiteSpace: "pre-wrap", marginBottom: 8, maxHeight: 260, overflow: "auto" }}>{decryptedPreview}</div>}
+
+        {downloadReady && (
+          <div style={{ marginTop: 8 }}>
+            <div><strong>Ready:</strong> {downloadReady.filename} ({Math.round(downloadReady.size / 1024)} KB)</div>
+            <div style={{ marginTop: 8 }}>
+              <a href={downloadReady.url} download={downloadReady.filename} style={{ padding: "8px 12px", background: "#0b63d8", color: "#fff", borderRadius: 6, textDecoration: "none" }}>Download decrypted file</a>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <button onClick={handleClearIncoming} style={{ background: "#fff", border: "1px solid #ddd", padding: "8px 12px", borderRadius: 6 }}>Close</button>
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginTop: 18, color: "#666", fontSize: 13 }}>
+          Tip: This page only asks for the code. The encrypted payload is included in the link you were sent; the server does not see your code.
+        </div>
+      </div>
+    );
+  }
+
+  // Otherwise render full landing + uploader
+  return (
+    <div style={{ fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, Arial", color: "#111", padding: 20, maxWidth: 980, margin: "18px auto" }}>
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 28, display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 20 }}>🔐</span><span>Welcome to BurnZip</span></h1>
+          <p style={{ margin: "6px 0 0 0", color: "#444", maxWidth: 720 }}>No login. No tracking metadata. No logs. No storage. No footprint. Just trust.</p>
+        </div>
         <div style={{ textAlign: "right" }}>
-          <button
-            onClick={openUploader}
-            style={{
-              backgroundColor: "#0b63d8",
-              color: "#fff",
-              border: "none",
-              padding: "10px 14px",
-              borderRadius: 8,
-              cursor: "pointer",
-              fontWeight: 600,
-            }}
-          >
-            Get Started
-          </button>
+          <button onClick={openUploader} style={{ backgroundColor: "#0b63d8", color: "#fff", border: "none", padding: "10px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}>Get Started</button>
         </div>
       </header>
 
       <main style={{ marginTop: 18 }}>
-        <p style={{ fontSize: 16, color: "#222" }}>
-          A privacy-first, SaaS framework that leverages modular AI to facilitate encrypted file sharing — without compromising user autonomy.
-        </p>
+        <p style={{ fontSize: 16, color: "#222" }}>A privacy-first, SaaS framework that leverages modular AI to facilitate encrypted file sharing — without compromising user autonomy.</p>
 
         <div style={{ border: "1px solid #e6e6e6", padding: 16, borderRadius: 10, marginTop: 14, background: "#fafafa" }}>
           <strong>We only generate $ through advertisements, not your data.</strong>
@@ -327,38 +337,20 @@ export default function App() {
         <div style={{ display: "flex", gap: 18, marginTop: 22, flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 320px" }}>
             <Section title="✅ What’s Stored">
-              <div>
-                <strong>Encrypted file blobs, never raw data.</strong> Stored short-lived cache. Auto-deletes after expiry 24 hours or download.
-              </div>
+              <div><strong>Encrypted file blobs, never raw data.</strong> Stored short-lived cache. Auto-deletes after expiry 24 hours or download.</div>
             </Section>
-
             <Section title="🧠 Where It’s Stored">
               <div>No persistent disk storage. No database footprint. On third-party infrastructure you control. Short-lived caches only.</div>
             </Section>
-
             <Section title="Quick Start">
-              <div>
-                Click <strong>Get Started</strong> to open the uploader. Choose "File" or "Message", enter a 10-character alphanumeric code, then click Prepare. Share the generated link and code. Auto-deletes after expiry 24 hours or download.
-              </div>
+              <div>Click <strong>Get Started</strong> to open the uploader. Choose "File" or "Message", enter a 10-character alphanumeric code, then click Prepare. Share the generated link and code. Auto-deletes after expiry 24 hours or download.</div>
             </Section>
           </div>
 
           <div style={{ flex: "0 1 320px" }}>
-            <Section title="About Ads and Revenue">
-              <div>Ads are the only revenue source; we do not monetise user data. Ads are served via third-party networks and do not change how files are processed or stored.</div>
-            </Section>
-
-            <Section title="Save to your home screen">
-              <div>
-                <strong>iOS</strong> — Tap the share icon, select "Add to Homescreen"
-                <br />
-                <strong>Android</strong> — Tap the three dot menu, select "Add to homescreen"
-              </div>
-            </Section>
-
-            <Section title="Security Notes">
-              <div>All encryption is performed client-side before upload. Keep your 10-character code safe; BurnZip cannot recover it for you.</div>
-            </Section>
+            <Section title="About Ads and Revenue"><div>Ads are the only revenue source; we do not monetise user data. Ads are served via third-party networks and do not change how files are processed or stored.</div></Section>
+            <Section title="Save to your home screen"><div><strong>iOS</strong> — Tap the share icon, select "Add to Homescreen"<br/><strong>Android</strong> — Tap the three dot menu, select "Add to homescreen"</div></Section>
+            <Section title="Security Notes"><div>All encryption is performed client-side before upload. Keep your 10-character code safe; BurnZip cannot recover it for you.</div></Section>
           </div>
         </div>
 
@@ -366,29 +358,14 @@ export default function App() {
 
         <Section title="Privacy Policy">
           <ol style={{ color: "#333" }}>
-            <li><strong>No Accounts, No Tracking</strong> — BurnZip does not require user accounts, logins, or personal identifiers. We do not track or store user behaviour.</li>
-            <li><strong>Client-Side Encryption</strong> — All files are encrypted locally before transfer. BurnZip servers never see plaintext content.</li>
-            <li><strong>Temporary Metadata</strong> — We may temporarily process non-identifiable metadata to facilitate delivery. This data is deleted automatically.</li>
-            <li><strong>No Cookies or Analytics</strong> — BurnZip does not use cookies, trackers, or third-party analytics tools.</li>
-            <li><strong>Third-Party Services</strong> — If you integrate external services, their policies apply.</li>
-            <li><strong>Security Practices</strong> — Industry-standard encryption, rate limiting, tamper detection. No system is 100% secure.</li>
+            <li><strong>No Accounts, No Tracking</strong> — BurnZip does not require user accounts, logins, or personal identifiers.</li>
+            <li><strong>Client-Side Encryption</strong> — Files are encrypted locally before transfer. BurnZip servers never see plaintext content.</li>
+            <li><strong>Temporary Metadata</strong> — Non-identifiable metadata may be used to facilitate delivery and deleted automatically.</li>
+            <li><strong>No Cookies or Analytics</strong> — BurnZip does not use cookies or trackers.</li>
           </ol>
         </Section>
 
-        <Section title="Terms of Use">
-          <ol style={{ color: "#333" }}>
-            <li><strong>Acceptance</strong> — By using BurnZip, you agree to these Terms.</li>
-            <li><strong>Use Restrictions</strong> — You may not use BurnZip to share illegal, harmful, or infringing content.</li>
-            <li><strong>No Warranty</strong> — BurnZip is provided as-is.</li>
-            <li><strong>Limitation of Liability</strong> — BurnZip is not liable for damages arising from use.</li>
-            <li><strong>Intellectual Property</strong> — BurnZip branding and code are privately owned.</li>
-            <li><strong>Modifications</strong> — Terms may be updated at any time.</li>
-          </ol>
-        </Section>
-
-        <Section title="Contact">
-          <div>Email: <a href="mailto:burnzip33@gmail.com">burnzip33@gmail.com</a></div>
-        </Section>
+        <Section title="Contact"><div>Email: <a href="mailto:burnzip33@gmail.com">burnzip33@gmail.com</a></div></Section>
       </main>
 
       <footer style={{ marginTop: 28, color: "#666", fontSize: 13 }}>© {new Date().getFullYear()} BurnZip</footer>
@@ -421,48 +398,23 @@ export default function App() {
             </div>
 
             {preview && <div style={{ marginTop: 12, color: "#333" }}><strong>Preview:</strong> {preview}</div>}
-
             {pasteWarning && <div style={{ marginTop: 10, color: "crimson" }}>{pasteWarning}</div>}
 
             {shareUrl && (
               <div style={{ marginTop: 12 }}>
-                <div><strong>Share link copied to clipboard when generated.</strong></div>
-                <div style={{ marginTop: 8, wordBreak: "break-all" }}>
-                  <input value={shareUrl.url} readOnly style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ddd" }} onFocus={(e)=>e.target.select()} />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div><strong>Share link generated</strong></div>
+                  <div style={{ color: "#666", fontSize: 13 }}>{Math.round(shareUrl.size / 1024)} KB</div>
                 </div>
-                <div style={{ marginTop: 8, fontSize: 13, color: "#444" }}>
-                  Share the link and the 10-character code with your recipient.
+
+                <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                  <input ref={copyInputRef} value={shareUrl.url} readOnly style={{ flex: 1, padding: 8, borderRadius: 6, border: "1px solid #ddd", wordBreak: "break-all" }} onFocus={(e) => e.target.select()} />
+                  <button onClick={copyShareInput} style={{ padding: "8px 12px", borderRadius: 6, background: "#0b63d8", color: "#fff", border: "none" }}>Copy</button>
                 </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
-      {incomingShare && (
-        <div style={{ position: "fixed", right: 18, bottom: 18, width: 420, maxWidth: "94%", background: "#fff", borderRadius: 10, padding: 14, boxShadow: "0 8px 30px rgba(0,0,0,0.12)", zIndex: 9998 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <strong>Encrypted payload detected</strong>
-            <button onClick={handleClearFragment} style={{ background: "#fff", border: "1px solid #ddd", padding: "6px 8px", borderRadius: 6 }}>Clear</button>
-          </div>
+                {copyToast && <div style={{ marginTop: 8, color: "#0b63d8" }}>{copyToast}</div>}
 
-          <div style={{ marginTop: 10 }}>
-            <div style={{ marginBottom: 8 }}>
-              Enter the 10-character code to decrypt and download.
-            </div>
-            <input value={incomingCode} onChange={(e) => setIncomingCode(e.target.value.toUpperCase())} maxLength={10} style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ddd" }} />
-            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-              <button disabled={busy} onClick={() => handleDownloadFromShare(incomingShare)} style={{ background: "#0b63d8", color: "#fff", padding: "8px 10px", borderRadius: 6, border: "none" }}>{busy ? "Working…" : "Decrypt & Download"}</button>
-              <button onClick={() => { try { navigator.clipboard.writeText(window.location.href); alert("Link copied"); } catch { alert("Copy failed"); } }} style={{ padding: "8px 10px", borderRadius: 6 }}>Copy Link</button>
-            </div>
-
-            {decryptedPreview && <div style={{ marginTop: 10, whiteSpace: "pre-wrap", maxHeight: 200, overflow: "auto", background: "#f8f8f8", padding: 8, borderRadius: 6 }}>{decryptedPreview}</div>}
-            {downloadReady && (
-              <div style={{ marginTop: 10 }}>
-                <div><strong>Ready:</strong> {downloadReady.filename} ({Math.round(downloadReady.size/1024)} KB)</div>
-                <div style={{ marginTop: 8 }}>
-                  <a href={downloadReady.url} download={downloadReady.filename} style={{ padding: "8px 10px", background: "#0b63d8", color: "#fff", borderRadius: 6, textDecoration: "none" }}>Download decrypted file</a>
-                </div>
+                <div style={{ marginTop: 8, fontSize: 13, color: "#444" }}>Share this link and the 10-character code with the recipient. The recipient only needs the code to decrypt.</div>
               </div>
             )}
           </div>
