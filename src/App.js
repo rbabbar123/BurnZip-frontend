@@ -252,7 +252,7 @@ export default function App() {
   }
 
   function handleClearFragment() {
-    history.replaceState(null, "", window.location.pathname);
+    window.history.replaceState(null, "", window.location.pathname);
     setIncomingShare(null);
     setIncomingCode("");
     setDecryptedPreview(null);
@@ -453,7 +453,7 @@ export default function App() {
             <input value={incomingCode} onChange={(e) => setIncomingCode(e.target.value.toUpperCase())} maxLength={10} style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ddd" }} />
             <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
               <button disabled={busy} onClick={() => handleDownloadFromShare(incomingShare)} style={{ background: "#0b63d8", color: "#fff", padding: "8px 10px", borderRadius: 6, border: "none" }}>{busy ? "Working…" : "Decrypt & Download"}</button>
-              <button onClick={() => { try { navigator.clipboard.writeText(location.href); alert("Link copied"); } catch { alert("Copy failed"); } }} style={{ padding: "8px 10px", borderRadius: 6 }}>Copy Link</button>
+              <button onClick={() => { try { navigator.clipboard.writeText(window.location.href); alert("Link copied"); } catch { alert("Copy failed"); } }} style={{ padding: "8px 10px", borderRadius: 6 }}>Copy Link</button>
             </div>
 
             {decryptedPreview && <div style={{ marginTop: 10, whiteSpace: "pre-wrap", maxHeight: 200, overflow: "auto", background: "#f8f8f8", padding: 8, borderRadius: 6 }}>{decryptedPreview}</div>}
