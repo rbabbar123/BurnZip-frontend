@@ -330,10 +330,6 @@ export default function App() {
       <main style={{ marginTop: 18 }}>
         <p style={{ fontSize: 16, color: "#222" }}>A privacy-first, SaaS framework that leverages modular AI to facilitate encrypted file sharing — without compromising user autonomy.</p>
 
-        <div style={{ border: "1px solid #e6e6e6", padding: 16, borderRadius: 10, marginTop: 14, background: "#fafafa" }}>
-          <strong>We only generate $ through advertisements, not your data.</strong>
-        </div>
-
         <div style={{ display: "flex", gap: 18, marginTop: 22, flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 320px" }}>
             <Section title="✅ What’s Stored">
@@ -348,7 +344,6 @@ export default function App() {
           </div>
 
           <div style={{ flex: "0 1 320px" }}>
-            <Section title="About Ads and Revenue"><div>Ads are the only revenue source; we do not monetise user data. Ads are served via third-party networks and do not change how files are processed or stored.</div></Section>
             <Section title="Save to your home screen"><div><strong>iOS</strong> — Tap the share icon, select "Add to Homescreen"<br/><strong>Android</strong> — Tap the three dot menu, select "Add to homescreen"</div></Section>
             <Section title="Security Notes"><div>All encryption is performed client-side before upload. Keep your 10-character code safe; BurnZip cannot recover it for you.</div></Section>
           </div>
